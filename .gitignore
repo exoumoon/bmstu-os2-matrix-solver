@@ -1,0 +1,13 @@
+# Rust stuff.
+debug/
+target/
+dist/
+tarpaulin-report.html
+**/*.rs.bk
+*.pdb
+
+# Nix stuff.
+result
+.direnv/
+
+*.mtx
