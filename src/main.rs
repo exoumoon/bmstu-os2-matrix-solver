@@ -10,9 +10,14 @@
 use clap::Parser;
 use color_eyre::eyre::Report;
 use color_eyre::owo_colors::OwoColorize;
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 use sprs::io::{read_matrix_market, read_matrix_market_from_bufread};
 use sprs::{CsMat, SparseMat};
 use std::io::Cursor;
+use std::simd::num::SimdFloat;
+use std::simd::{f64x4, Simd};
+use std::time::Instant;
 
 pub mod cli;
 
@@ -38,8 +43,20 @@ fn main() -> Result<(), Report> {
     eprintln!("{:?}", matrix.to_csr::<usize>().to_dense());
 
     let vector = vec![1.0; matrix.rows()];
-    let solution = bicgstab_preconditioned(&matrix.to_csr(), &vector, 10e-4, 1000).unwrap();
-    eprintln!("Solution: {solution:.2?} [len: {}]", solution.len().red());
+
+    for num_threads in 1..=100 {
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build()?;
+        pool.install(|| {
+            let compute_start = Instant::now();
+            let _ = bicgstab_preconditioned(&matrix.to_csr(), &vector, 10e-4, 1_000_000).unwrap();
+            let compute_end = Instant::now();
+            let compute_duration = compute_end - compute_start;
+            eprintln!(
+                "[{num_threads} threads]: Found a solution in {}ms",
+                compute_duration.as_millis()
+            );
+        });
+    }
 
     Ok(())
 }
@@ -69,11 +86,26 @@ fn spmv(a: &CsMat<i32>, x: &[f64]) -> Vec<f64> {
 }
 
 fn dot_product(vector_a: &[f64], vector_b: &[f64]) -> f64 {
-    vector_a
-        .iter()
-        .zip(vector_b.iter())
-        .map(|(x, y)| x * y)
-        .sum()
+    const LANES: usize = 8;
+    type SimdType = Simd<f64, LANES>;
+
+    let len = vector_a.len().min(vector_b.len());
+    let chunks = len / LANES;
+
+    let mut simd_sum = SimdType::splat(0.0);
+    for i in 0..chunks {
+        let a_chunk = SimdType::from_slice(&vector_a[i * LANES..][..LANES]);
+        let b_chunk = SimdType::from_slice(&vector_b[i * LANES..][..LANES]);
+        simd_sum += a_chunk * b_chunk;
+    }
+
+    let mut total = simd_sum.reduce_sum();
+
+    for i in chunks * LANES..len {
+        total += vector_a[i] * vector_b[i];
+    }
+
+    total
 }
 
 fn norm(v: &[f64]) -> f64 {
@@ -131,8 +163,8 @@ pub fn bicgstab_preconditioned(
         v = spmv(matrix, &p_hat);
         alpha = rho / dot_product(&r_tld, &v);
         let s: Vec<f64> = r
-            .iter()
-            .zip(v.iter())
+            .par_iter()
+            .zip(v.par_iter())
             .map(|(ri, vi)| ri - alpha * vi)
             .collect();
 
@@ -152,8 +184,8 @@ pub fn bicgstab_preconditioned(
         }
 
         r = s
-            .iter()
-            .zip(t.iter())
+            .par_iter()
+            .zip(t.par_iter())
             .map(|(si, ti)| si - omega * ti)
             .collect();
 
