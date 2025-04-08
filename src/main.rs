@@ -12,14 +12,13 @@ use clap::Parser;
 use color_eyre::eyre::Report;
 use color_eyre::owo_colors::OwoColorize;
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
 use sprs::io::{read_matrix_market, read_matrix_market_from_bufread};
 use sprs::{CsMat, SparseMat};
 use std::io::Cursor;
 use std::simd::num::SimdFloat;
 use std::simd::Simd;
-use std::time::Instant;
 
+pub mod benchmark;
 pub mod cli;
 
 /// 39x39 разреженная матрица, зашитая в программу. Используется по
@@ -45,19 +44,21 @@ fn main() -> Result<(), Report> {
 
     let vector = vec![1.0; matrix.rows()];
 
-    for num_threads in 1..=100 {
-        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build()?;
-        pool.install(|| {
-            let compute_start = Instant::now();
-            let _ = bicgstab_preconditioned(&matrix.to_csr(), &vector, 10e-4, 1_000_000).unwrap();
-            let compute_end = Instant::now();
-            let compute_duration = compute_end - compute_start;
-            eprintln!(
-                "[{num_threads} threads]: Found a solution in {}ms",
-                compute_duration.as_millis()
-            );
-        });
-    }
+    // for num_threads in 1..=100 {
+    //     let pool = ThreadPoolBuilder::new().num_threads(num_threads).build()?;
+    //     pool.install(|| {
+    //         let compute_start = Instant::now();
+    //         let _ = bicgstab_preconditioned(&matrix.to_csr(), &vector, 10e-4,
+    // 1_000_000).unwrap();         let compute_end = Instant::now();
+    //         let compute_duration = compute_end - compute_start;
+    //         eprintln!(
+    //             "[{num_threads} threads]: Found a solution in {}ms",
+    //             compute_duration.as_millis()
+    //         );
+    //     });
+    // }
+
+    let _ = benchmark::run_benchmark(&matrix.to_csr(), &vector, 10e-4, 1_000_000, 100);
 
     Ok(())
 }
