@@ -1,4 +1,5 @@
 #![feature(portable_simd)]
+#![expect(clippy::redundant_clone)]
 #![allow(
     clippy::cast_precision_loss,
     clippy::missing_errors_doc,
@@ -16,7 +17,7 @@ use sprs::io::{read_matrix_market, read_matrix_market_from_bufread};
 use sprs::{CsMat, SparseMat};
 use std::io::Cursor;
 use std::simd::num::SimdFloat;
-use std::simd::{f64x4, Simd};
+use std::simd::Simd;
 use std::time::Instant;
 
 pub mod cli;
