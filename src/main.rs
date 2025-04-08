@@ -1,65 +1,41 @@
+#![feature(portable_simd)]
+#![allow(clippy::cast_precision_loss)]
+
+use clap::Parser;
 use color_eyre::eyre::Report;
-use sprs::io::read_matrix_market;
+use color_eyre::owo_colors::OwoColorize;
+use sprs::io::{read_matrix_market, read_matrix_market_from_bufread};
+use sprs::SparseMat;
+use std::io::Cursor;
+
+pub mod cli;
+
+/// A 39x39 sparse matrix with 131 non-zero cells, used as fallback.
+pub const FALLBACK_MATRIX_STR: &str = include_str!("../assets/mtx/bcsstk05_integer.mtx");
 
 fn main() -> Result<(), Report> {
     color_eyre::install()?;
 
-    let matrix = read_matrix_market::<f64, usize, &str>("assets/mtx/bcsstk05.mtx")?;
-    dbg!(&matrix);
+    let options = cli::Options::parse();
+    let matrix = match options.matrix_path {
+        Some(path) => read_matrix_market::<i32, usize, _>(path)?,
+        None => read_matrix_market_from_bufread(&mut Cursor::new(FALLBACK_MATRIX_STR))?,
+    };
+
+    eprintln!("Loaded matrix: {}", SparseMatrixInfo::paramaters(&matrix));
 
     Ok(())
 }
 
-// fn bicgstab_preconditioned(
-//     a: &CsMat<f64>,
-//     b: &DVector<f64>,
-//     m_inv: &dyn Fn(&DVector<f64>) -> DVector<f64>, /* Предобуславливатель */
-//     tol: f64,
-//     max_iter: usize,
-// ) -> DVector<f64> {
-//     let n = b.len();
-//     let mut x = DVector::zeros(n);
-//     let mut r = b - &a * &x;
-//     let mut r_hat = r.clone();
-//     let mut rho_old = 1.0;
-//     let mut alpha = 1.0;
-//     let mut omega = 1.0;
-//     let mut v = DVector::zeros(n);
-//     let mut p = DVector::zeros(n);
+pub struct SparseMatrixInfo;
 
-//     for _ in 0..max_iter {
-//         let rho_new = r_hat.dot(&r);
-//         if rho_new.abs() < 1e-20 {
-//             break;
-//         }
-
-//         let beta = (rho_new / rho_old) * (alpha / omega);
-//         p = &r + beta * (&p - omega * &v);
-
-//         // Применяем предобуславливатель
-//         let y = m_inv(&p);
-//         v = &a * &y;
-//         alpha = rho_new / r_hat.dot(&v);
-//         let s = &r - alpha * &v;
-
-//         if s.norm() < tol {
-//             x += alpha * &y;
-//             break;
-//         }
-
-//         // Применяем предобуславливатель к s
-//         let z = m_inv(&s);
-//         let t = &a * &z;
-//         omega = t.dot(&s) / t.dot(&t);
-//         x += alpha * &y + omega * &z;
-//         r = &s - omega * &t;
-
-//         if r.norm() < tol {
-//             break;
-//         }
-
-//         rho_old = rho_new;
-//     }
-
-//     x
-// }
+impl SparseMatrixInfo {
+    pub fn paramaters<M: SparseMat>(matrix: &M) -> String {
+        format!(
+            "[{}×{}], {} nonzero cells",
+            matrix.rows().blue().bold(),
+            matrix.cols().blue().bold(),
+            matrix.nnz().magenta().bold(),
+        )
+    }
+}
