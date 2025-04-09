@@ -21,8 +21,6 @@ use std::simd::Simd;
 pub mod benchmark;
 pub mod cli;
 
-/// 39x39 разреженная матрица, зашитая в программу. Используется по
-/// умолчанию, если не указан путь до какого-либо .mtx файла.
 pub const FALLBACK_MATRIX_STR: &str = include_str!("../assets/mtx/3by3_integer.mtx");
 
 fn main() -> Result<(), Report> {
@@ -38,27 +36,21 @@ fn main() -> Result<(), Report> {
         None => read_matrix_market_from_bufread(&mut Cursor::new(FALLBACK_MATRIX_STR))?,
     };
 
-    // Матрица успешно считана, выведем информацию об её параметрах.
     eprintln!("Loaded matrix: {}", SparseMatrixInfo::paramaters(&matrix));
     eprintln!("{:?}", matrix.to_csr::<usize>().to_dense());
 
     let vector = vec![1.0; matrix.rows()];
 
-    // for num_threads in 1..=100 {
-    //     let pool = ThreadPoolBuilder::new().num_threads(num_threads).build()?;
-    //     pool.install(|| {
-    //         let compute_start = Instant::now();
-    //         let _ = bicgstab_preconditioned(&matrix.to_csr(), &vector, 10e-4,
-    // 1_000_000).unwrap();         let compute_end = Instant::now();
-    //         let compute_duration = compute_end - compute_start;
-    //         eprintln!(
-    //             "[{num_threads} threads]: Found a solution in {}ms",
-    //             compute_duration.as_millis()
-    //         );
-    //     });
-    // }
-
-    let _ = benchmark::run_benchmark(&matrix.to_csr(), &vector, 10e-4, 1_000_000, 100);
+    let tolerance = 10e-4;
+    let iterations = 1_000_000;
+    let max_threads = 100;
+    let _ = benchmark::run_benchmark(
+        &matrix.to_csr(),
+        &vector,
+        tolerance,
+        iterations,
+        max_threads,
+    );
 
     Ok(())
 }
