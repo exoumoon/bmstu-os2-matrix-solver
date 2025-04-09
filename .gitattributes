@@ -1,2 +1,6 @@
 assets/mtx/fidap011.mtx filter=lfs diff=lfs merge=lfs -text
 assets/mtx/fidap011_rhs1.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/e40r0000.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/e40r0000_rhs1.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/e20r0000.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/e20r0000_rhs1.mtx filter=lfs diff=lfs merge=lfs -text
