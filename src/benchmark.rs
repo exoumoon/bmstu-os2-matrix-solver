@@ -23,7 +23,7 @@ fn amdahl_alpha(p: f64, sp: f64) -> f64 {
 
 #[must_use]
 pub fn run_benchmark(
-    matrix: &CsMat<i32>,
+    matrix: &CsMat<f64>,
     b: &[f64],
     tolerance: f64,
     iterations: usize,

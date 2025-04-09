@@ -8,6 +8,10 @@
     clippy::many_single_char_names
 )]
 
+// NOTE:
+// ||Ax - b||         < e при dim < 10.000
+// ||Ax - b|| / ||b|| < e при dim >= 10.000
+
 use clap::Parser;
 use color_eyre::eyre::Report;
 use color_eyre::owo_colors::OwoColorize;
@@ -30,7 +34,7 @@ fn main() -> Result<(), Report> {
     let matrix = match options.matrix_path {
         // Если путь передан, считываем из файла по тому пути. `sprs` не умеет читать
         // `pattern` матрицы, поэтому это обязательно должна быть матрица типа `integer`.
-        Some(path) => read_matrix_market::<i32, usize, _>(path)?,
+        Some(path) => read_matrix_market::<f64, usize, _>(path)?,
 
         // Если путь не передан, считываем матрицу из зашитой в программу.
         None => read_matrix_market_from_bufread(&mut Cursor::new(FALLBACK_MATRIX_STR))?,
@@ -55,13 +59,13 @@ fn main() -> Result<(), Report> {
     Ok(())
 }
 
-fn jacobi_preconditioner(matrix: &CsMat<i32>) -> Vec<f64> {
+fn jacobi_preconditioner(matrix: &CsMat<f64>) -> Vec<f64> {
     let num_columns = matrix.cols();
     let mut inverted = vec![0.0; num_columns];
     for (index, value) in inverted.iter_mut().enumerate() {
         if let Some(&cell_value) = matrix.get(index, index) {
-            if cell_value != 0 {
-                *value = 1.0 / f64::from(cell_value);
+            if cell_value != 0.0 {
+                *value = 1.0 / cell_value;
             }
         }
     }
@@ -69,11 +73,12 @@ fn jacobi_preconditioner(matrix: &CsMat<i32>) -> Vec<f64> {
     inverted
 }
 
-fn spmv(a: &CsMat<i32>, x: &[f64]) -> Vec<f64> {
+// TODO: Parallelize
+fn spmv(a: &CsMat<f64>, x: &[f64]) -> Vec<f64> {
     let mut y = vec![0.0; a.rows()];
     for (r, row) in a.outer_iterator().enumerate() {
         for (c, cell) in row.iter() {
-            y[r] += f64::from(*cell) * x[c];
+            y[r] += *cell * x[c];
         }
     }
     y
@@ -102,12 +107,12 @@ fn dot_product(vector_a: &[f64], vector_b: &[f64]) -> f64 {
     total
 }
 
-fn norm(v: &[f64]) -> f64 {
-    dot_product(v, v).sqrt()
+fn norm(vector: &[f64]) -> f64 {
+    dot_product(vector, vector).sqrt()
 }
 
 pub fn bicgstab_preconditioned(
-    matrix: &CsMat<i32>,
+    matrix: &CsMat<f64>,
     vector: &[f64],
     tolerance: f64,
     num_iterations: usize,
