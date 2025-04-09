@@ -13,6 +13,7 @@
 
 use clap::Parser;
 use color_eyre::eyre::Report;
+use itertools::Itertools;
 use nalgebra_sparse::{CsrMatrix, SparseEntry};
 use rayon::prelude::*;
 use std::simd::num::SimdFloat;
@@ -89,26 +90,22 @@ fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> Vec<f64> {
 )]
 fn parallelized_spmv(matrix: &CsrMatrix<f64>, vector: &[f64]) -> Vec<f64> {
     let start = Instant::now();
-    let mut result = matrix
+    let result = matrix
         .row_iter()
-        .enumerate()
-        .par_bridge() /* <-- NOTE: Код после этого выполняется параллельно */
-        .map(|(row_index, row)| {
+        .collect_vec()
+        .par_iter() /* <-- NOTE: Код после этого выполняется параллельно */
+        .map(|row| {
             let sum = row
                 .values()
                 .iter()
                 .zip(row.col_indices())
                 .map(|(row_value, index)| row_value * vector[*index])
                 .sum();
-            (row_index, sum)
+            sum
         })
-        .collect::<Vec<_>>(); /* WARN: Необходимо восстановить порядок строк! */
-    tracing::debug!(duration = ?start.elapsed(), "Finished multiplying sparse matrix by vector");
-    let before_sorting = Instant::now();
-    result.sort_unstable_by_key(|(row_index, _)| *row_index);
-    tracing::debug!(duration = ?before_sorting.elapsed(), "Restored row order");
-
-    result.into_iter().map(|(_, value)| value).collect()
+        .collect::<Vec<_>>();
+    tracing::debug!(duration = ?start.elapsed(), "Multiplied sparse matrix by vector");
+    result
 }
 
 fn dot_product(vector_a: &[f64], vector_b: &[f64]) -> f64 {
