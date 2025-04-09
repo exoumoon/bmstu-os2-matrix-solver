@@ -1,7 +1,7 @@
 #![feature(portable_simd)]
 #![expect(
-    clippy::many_single_char_names,
-    clippy::missing_errors_doc,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
     clippy::missing_panics_doc,
     clippy::redundant_clone,
     clippy::suboptimal_flops
@@ -18,13 +18,13 @@ use nalgebra_sparse::{CsrMatrix, SparseEntry};
 use rayon::prelude::*;
 use std::simd::num::SimdFloat;
 use std::simd::Simd;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::instrument;
 
 pub mod benchmark;
 pub mod cli;
 
-pub const FALLBACK_MATRIX_STR: &str = include_str!("../assets/mtx/3by3_integer.mtx");
+pub const FALLBACK_MATRIX_STR: &str = include_str!("../assets/mtx/fidap011.mtx");
 
 pub const FLOAT_TOLERANCE: f64 = 10e-4;
 pub const MAX_BICGSTAB_ITERATIONS: usize = 1_000_000;
@@ -135,6 +135,7 @@ fn norm(vector: &[f64]) -> f64 {
     dot_product(vector, vector).sqrt()
 }
 
+#[instrument(skip(matrix, vector))]
 pub fn bicgstab_preconditioned(
     matrix: &CsrMatrix<f64>,
     vector: &[f64],
@@ -169,7 +170,26 @@ pub fn bicgstab_preconditioned(
         return Ok(x);
     }
 
-    for _ in 0..num_iterations {
+    let start = Instant::now();
+    let mut last_checkpoint = start;
+    for iter in 0..num_iterations {
+        {
+            if iter > 0 && iter % (num_iterations / 1000) == 0 {
+                let completion = iter as f64 / num_iterations as f64;
+                let since_checkpoint = last_checkpoint.elapsed();
+                let estimated_completion_secs = start.elapsed().as_secs_f64() / completion;
+                let estimated_remaining =
+                    Duration::from_secs_f64(estimated_completion_secs) - start.elapsed();
+                tracing::info!(
+                    completion,
+                    ?since_checkpoint,
+                    ?estimated_remaining,
+                    ?estimated_completion_secs,
+                    "Completed {iter} of {num_iterations} iterations"
+                );
+                last_checkpoint = Instant::now();
+            }
+        }
         let rho_new = dot_product(&r_tld, &r);
         if rho_new.abs() < f64::EPSILON {
             return Err("Breakdown: rho ~ 0");

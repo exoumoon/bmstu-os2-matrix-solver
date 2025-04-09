@@ -32,7 +32,7 @@ pub fn run_benchmark(
     let mut results = Vec::new();
     let mut t1 = 0.0;
 
-    for num_threads in 1..=max_threads {
+    for num_threads in 4..=max_threads {
         let pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
