@@ -15,7 +15,6 @@
 use clap::Parser;
 use color_eyre::eyre::Report;
 use color_eyre::owo_colors::OwoColorize;
-use rayon::prelude::*;
 use sprs::io::{read_matrix_market, read_matrix_market_from_bufread};
 use sprs::{CsMat, SparseMat};
 use std::io::Cursor;
@@ -26,6 +25,10 @@ pub mod benchmark;
 pub mod cli;
 
 pub const FALLBACK_MATRIX_STR: &str = include_str!("../assets/mtx/3by3_integer.mtx");
+
+pub const FLOAT_TOLERANCE: f64 = 10e-4;
+pub const MAX_BICGSTAB_ITERATIONS: usize = 1_000_000;
+pub const MAX_RAYON_THREADS: usize = 100;
 
 fn main() -> Result<(), Report> {
     color_eyre::install()?;
@@ -45,15 +48,12 @@ fn main() -> Result<(), Report> {
 
     let vector = vec![1.0; matrix.rows()];
 
-    let tolerance = 10e-4;
-    let iterations = 1_000_000;
-    let max_threads = 100;
     let _ = benchmark::run_benchmark(
         &matrix.to_csr(),
         &vector,
-        tolerance,
-        iterations,
-        max_threads,
+        FLOAT_TOLERANCE,
+        MAX_BICGSTAB_ITERATIONS,
+        MAX_RAYON_THREADS,
     );
 
     Ok(())
@@ -73,8 +73,8 @@ fn jacobi_preconditioner(matrix: &CsMat<f64>) -> Vec<f64> {
     inverted
 }
 
-// TODO: Parallelize
-fn spmv(a: &CsMat<f64>, x: &[f64]) -> Vec<f64> {
+// TODO: Parallelize (sparse matrix) * (regular vector).
+fn sparse_matrix_mul_vector(a: &CsMat<f64>, x: &[f64]) -> Vec<f64> {
     let mut y = vec![0.0; a.rows()];
     for (r, row) in a.outer_iterator().enumerate() {
         for (c, cell) in row.iter() {
@@ -125,7 +125,7 @@ pub fn bicgstab_preconditioned(
         |v: &[f64]| -> Vec<f64> { v.iter().zip(&m_inv).map(|(vi, mi)| vi * mi).collect() };
 
     let mut r = {
-        let ax = spmv(matrix, &x);
+        let ax = sparse_matrix_mul_vector(matrix, &x);
         vector
             .iter()
             .zip(ax.iter())
@@ -159,11 +159,11 @@ pub fn bicgstab_preconditioned(
         rho = rho_new;
 
         let p_hat = apply_preconditioner(&p);
-        v = spmv(matrix, &p_hat);
+        v = sparse_matrix_mul_vector(matrix, &p_hat);
         alpha = rho / dot_product(&r_tld, &v);
         let s: Vec<f64> = r
-            .par_iter()
-            .zip(v.par_iter())
+            .iter()
+            .zip(v.iter())
             .map(|(ri, vi)| ri - alpha * vi)
             .collect();
 
@@ -175,7 +175,7 @@ pub fn bicgstab_preconditioned(
         }
 
         let s_hat = apply_preconditioner(&s);
-        let t = spmv(matrix, &s_hat);
+        let t = sparse_matrix_mul_vector(matrix, &s_hat);
         omega = dot_product(&t, &s) / dot_product(&t, &t);
 
         for i in 0..n {
@@ -183,8 +183,8 @@ pub fn bicgstab_preconditioned(
         }
 
         r = s
-            .par_iter()
-            .zip(t.par_iter())
+            .iter()
+            .zip(t.iter())
             .map(|(si, ti)| si - omega * ti)
             .collect();
 
