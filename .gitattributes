@@ -1,0 +1,12 @@
+assets/mtx/af23560.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/bcsstk05.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/bcsstk05_integer.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/bcsstk14.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/blckhole.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/fidap011.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/fidapm11.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/3by3_integer.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/s3dkq4m2.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/fidapm11_rhs1.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/fidap011_rhs1.mtx filter=lfs diff=lfs merge=lfs -text
+assets/mtx/bcspwr01.mtx filter=lfs diff=lfs merge=lfs -text
