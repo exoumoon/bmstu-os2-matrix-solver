@@ -1,6 +1,6 @@
 use super::bicgstab_preconditioned;
+use nalgebra_sparse::CsrMatrix;
 use rayon::ThreadPoolBuilder;
-use sprs::CsMat;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ fn amdahl_alpha(p: f64, sp: f64) -> f64 {
 
 #[must_use]
 pub fn run_benchmark(
-    matrix: &CsMat<f64>,
+    matrix: &CsrMatrix<f64>,
     b: &[f64],
     tolerance: f64,
     iterations: usize,

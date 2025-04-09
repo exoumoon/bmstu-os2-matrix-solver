@@ -1,25 +1,24 @@
 #![feature(portable_simd)]
-#![expect(clippy::redundant_clone)]
-#![allow(
-    clippy::cast_precision_loss,
+#![expect(
+    clippy::many_single_char_names,
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
-    clippy::suboptimal_flops,
-    clippy::many_single_char_names
+    clippy::redundant_clone,
+    clippy::suboptimal_flops
 )]
 
-// NOTE:
+// NOTE: Verification:
 // ||Ax - b||         < e при dim < 10.000
 // ||Ax - b|| / ||b|| < e при dim >= 10.000
 
 use clap::Parser;
 use color_eyre::eyre::Report;
-use color_eyre::owo_colors::OwoColorize;
-use sprs::io::{read_matrix_market, read_matrix_market_from_bufread};
-use sprs::{CsMat, SparseMat};
-use std::io::Cursor;
+use nalgebra_sparse::{CsrMatrix, SparseEntry};
+use rayon::prelude::*;
 use std::simd::num::SimdFloat;
 use std::simd::Simd;
+use std::time::Instant;
+use tracing::instrument;
 
 pub mod benchmark;
 pub mod cli;
@@ -32,24 +31,23 @@ pub const MAX_RAYON_THREADS: usize = 100;
 
 fn main() -> Result<(), Report> {
     color_eyre::install()?;
+    install_tracing()?;
 
     let options = cli::Options::parse();
-    let matrix = match options.matrix_path {
+    let coo_matrix = match options.matrix_path {
         // Если путь передан, считываем из файла по тому пути. `sprs` не умеет читать
         // `pattern` матрицы, поэтому это обязательно должна быть матрица типа `integer`.
-        Some(path) => read_matrix_market::<f64, usize, _>(path)?,
+        Some(path) => nalgebra_sparse::io::load_coo_from_matrix_market_file(path)?,
 
         // Если путь не передан, считываем матрицу из зашитой в программу.
-        None => read_matrix_market_from_bufread(&mut Cursor::new(FALLBACK_MATRIX_STR))?,
+        None => nalgebra_sparse::io::load_coo_from_matrix_market_str(FALLBACK_MATRIX_STR)?,
     };
 
-    eprintln!("Loaded matrix: {}", SparseMatrixInfo::paramaters(&matrix));
-    eprintln!("{:?}", matrix.to_csr::<usize>().to_dense());
-
-    let vector = vec![1.0; matrix.rows()];
+    let csr_matrix = CsrMatrix::from(&coo_matrix);
+    let vector = vec![1.0; csr_matrix.nrows()];
 
     let _ = benchmark::run_benchmark(
-        &matrix.to_csr(),
+        &csr_matrix,
         &vector,
         FLOAT_TOLERANCE,
         MAX_BICGSTAB_ITERATIONS,
@@ -59,29 +57,58 @@ fn main() -> Result<(), Report> {
     Ok(())
 }
 
-fn jacobi_preconditioner(matrix: &CsMat<f64>) -> Vec<f64> {
-    let num_columns = matrix.cols();
-    let mut inverted = vec![0.0; num_columns];
-    for (index, value) in inverted.iter_mut().enumerate() {
-        if let Some(&cell_value) = matrix.get(index, index) {
-            if cell_value != 0.0 {
-                *value = 1.0 / cell_value;
+fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> Vec<f64> {
+    let mut inverted_vector = vec![0.0; matrix.ncols()];
+    for (index, value) in inverted_vector.iter_mut().enumerate() {
+        if let Some(sparse_entry) = matrix.get_entry(index, index) {
+            match sparse_entry {
+                SparseEntry::Zero => {}
+                SparseEntry::NonZero(cell_value) => {
+                    if *cell_value != 0.0 {
+                        *value = 1.0 / cell_value;
+                    }
+                }
             }
         }
     }
 
-    inverted
+    inverted_vector
 }
 
-// TODO: Parallelize (sparse matrix) * (regular vector).
-fn sparse_matrix_mul_vector(a: &CsMat<f64>, x: &[f64]) -> Vec<f64> {
-    let mut y = vec![0.0; a.rows()];
-    for (r, row) in a.outer_iterator().enumerate() {
-        for (c, cell) in row.iter() {
-            y[r] += *cell * x[c];
-        }
-    }
-    y
+/// Parallelized multiplication of a sparse matrix by a dense vector.
+#[instrument(
+    skip_all,
+    fields(
+        matrix.rows = matrix.nrows(),
+        matrix.columns = matrix.ncols(),
+        matrix.nonzero_cells = matrix.nnz(),
+        vector.len = vector.len(),
+        timings.multiplication,
+        timings.restoration,
+    ),
+)]
+fn parallelized_spmv(matrix: &CsrMatrix<f64>, vector: &[f64]) -> Vec<f64> {
+    let start = Instant::now();
+    let mut result = matrix
+        .row_iter()
+        .enumerate()
+        .par_bridge() /* <-- NOTE: Код после этого выполняется параллельно */
+        .map(|(row_index, row)| {
+            let sum = row
+                .values()
+                .iter()
+                .zip(row.col_indices())
+                .map(|(row_value, index)| row_value * vector[*index])
+                .sum();
+            (row_index, sum)
+        })
+        .collect::<Vec<_>>(); /* WARN: Необходимо восстановить порядок строк! */
+    tracing::debug!(duration = ?start.elapsed(), "Finished multiplying sparse matrix by vector");
+    let before_sorting = Instant::now();
+    result.sort_unstable_by_key(|(row_index, _)| *row_index);
+    tracing::debug!(duration = ?before_sorting.elapsed(), "Restored row order");
+
+    result.into_iter().map(|(_, value)| value).collect()
 }
 
 fn dot_product(vector_a: &[f64], vector_b: &[f64]) -> f64 {
@@ -112,12 +139,12 @@ fn norm(vector: &[f64]) -> f64 {
 }
 
 pub fn bicgstab_preconditioned(
-    matrix: &CsMat<f64>,
+    matrix: &CsrMatrix<f64>,
     vector: &[f64],
     tolerance: f64,
     num_iterations: usize,
 ) -> Result<Vec<f64>, &'static str> {
-    let n = matrix.cols();
+    let n = matrix.ncols();
     let mut x = vec![0.0; n];
     let m_inv = jacobi_preconditioner(matrix);
 
@@ -125,7 +152,7 @@ pub fn bicgstab_preconditioned(
         |v: &[f64]| -> Vec<f64> { v.iter().zip(&m_inv).map(|(vi, mi)| vi * mi).collect() };
 
     let mut r = {
-        let ax = sparse_matrix_mul_vector(matrix, &x);
+        let ax = parallelized_spmv(matrix, &x);
         vector
             .iter()
             .zip(ax.iter())
@@ -159,7 +186,7 @@ pub fn bicgstab_preconditioned(
         rho = rho_new;
 
         let p_hat = apply_preconditioner(&p);
-        v = sparse_matrix_mul_vector(matrix, &p_hat);
+        v = parallelized_spmv(matrix, &p_hat);
         alpha = rho / dot_product(&r_tld, &v);
         let s: Vec<f64> = r
             .iter()
@@ -175,7 +202,7 @@ pub fn bicgstab_preconditioned(
         }
 
         let s_hat = apply_preconditioner(&s);
-        let t = sparse_matrix_mul_vector(matrix, &s_hat);
+        let t = parallelized_spmv(matrix, &s_hat);
         omega = dot_product(&t, &s) / dot_product(&t, &t);
 
         for i in 0..n {
@@ -200,16 +227,22 @@ pub fn bicgstab_preconditioned(
     Err("BiCGSTAB did not converge within the maximum number of iterations")
 }
 
-// NOTE:
-// Просто адаптер для отображения информации, не имеет отношения к решению.
-pub struct SparseMatrixInfo;
-impl SparseMatrixInfo {
-    pub fn paramaters<M: SparseMat>(matrix: &M) -> String {
-        format!(
-            "[{}×{}], {} nonzero cells",
-            matrix.rows().blue().bold(),
-            matrix.cols().blue().bold(),
-            matrix.nnz().magenta().bold(),
-        )
-    }
+fn install_tracing() -> Result<(), Report> {
+    use tracing_error::ErrorLayer;
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let filter_layer = EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new("info"))?;
+    let format_layer = fmt::layer()
+        .pretty()
+        .without_time()
+        .with_writer(std::io::stderr);
+
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(format_layer)
+        .with(ErrorLayer::default())
+        .try_init()?;
+
+    Ok(())
 }
