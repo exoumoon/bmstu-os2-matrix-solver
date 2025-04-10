@@ -33,7 +33,6 @@ impl Spmv {
         let result: Vec<f64> = matrix
             .row_iter()
             .map(|row| {
-                /* NOTE: Код в этом блоке выполняется параллельно */
                 row.values()
                     .iter()
                     .zip(row.col_indices())
