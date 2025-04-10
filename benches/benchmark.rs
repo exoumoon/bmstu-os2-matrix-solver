@@ -16,7 +16,7 @@ fn benchmarks(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("spmv");
     group
         .warm_up_time(Duration::from_secs(5))
-        .measurement_time(Duration::from_secs(10));
+        .measurement_time(Duration::from_secs(5));
 
     for mtx_path in mtx_paths {
         let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(mtx_path).unwrap();
