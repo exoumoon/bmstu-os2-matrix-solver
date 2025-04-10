@@ -5,7 +5,7 @@
     clippy::suboptimal_flops
 )]
 
-use nalgebra_sparse::{CsrMatrix, SparseEntry};
+use nalgebra_sparse::CsrMatrix;
 use rayon::prelude::*;
 use std::simd::num::SimdFloat;
 use std::simd::Simd;
@@ -82,11 +82,14 @@ impl Spmv {
 pub fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> Vec<f64> {
     let mut result = vec![0.0; matrix.nrows()];
     for (row_index, row) in matrix.row_iter().enumerate() {
-        // TODO: Maybe skip directly to the needed element.
-        for (col_index, value) in row.col_indices().iter().zip(row.values()) {
-            if *col_index == row_index && *value != 0.0 {
+        let diagonal_index = row
+            .col_indices()
+            .iter()
+            .position(|&col_index| col_index == row_index);
+        if let Some(index) = diagonal_index {
+            let value = row.values()[index];
+            if value != 0.0 {
                 result[row_index] = 1.0 / value;
-                break;
             }
         }
     }
