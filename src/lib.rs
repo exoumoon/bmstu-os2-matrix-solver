@@ -33,6 +33,7 @@ impl Spmv {
         let result: Vec<f64> = matrix
             .row_iter()
             .map(|row| {
+                /* NOTE: Код в этом блоке выполняется параллельно */
                 row.values()
                     .iter()
                     .zip(row.col_indices())
@@ -77,22 +78,20 @@ impl Spmv {
     }
 }
 
-fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> Vec<f64> {
-    let mut inverted_vector = vec![0.0; matrix.ncols()];
-    for (index, value) in inverted_vector.iter_mut().enumerate() {
-        if let Some(sparse_entry) = matrix.get_entry(index, index) {
-            match sparse_entry {
-                SparseEntry::Zero => {}
-                SparseEntry::NonZero(cell_value) => {
-                    if *cell_value != 0.0 {
-                        *value = 1.0 / cell_value;
-                    }
-                }
+#[must_use]
+pub fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> Vec<f64> {
+    let mut result = vec![0.0; matrix.nrows()];
+    for (row_index, row) in matrix.row_iter().enumerate() {
+        // TODO: Maybe skip directly to the needed element.
+        for (col_index, value) in row.col_indices().iter().zip(row.values()) {
+            if *col_index == row_index && *value != 0.0 {
+                result[row_index] = 1.0 / value;
+                break;
             }
         }
     }
 
-    inverted_vector
+    result
 }
 
 fn dot_product(vector_a: &[f64], vector_b: &[f64]) -> f64 {
