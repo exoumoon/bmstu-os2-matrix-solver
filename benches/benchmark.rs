@@ -27,9 +27,7 @@ fn benchmarks(criterion: &mut Criterion) {
 
         let id = format!("serial-{mtx_path}");
         group.bench_function(&id, |b| {
-            b.iter(|| {
-                let _ = Spmv.serial(&csr_matrix, &random_vector);
-            });
+            b.iter(|| Spmv.serial(&csr_matrix, &random_vector));
         });
 
         for thread_count in [4, 8, 20] {
@@ -40,9 +38,7 @@ fn benchmarks(criterion: &mut Criterion) {
                     .build()
                     .unwrap();
                 thread_pool.install(|| {
-                    b.iter(|| {
-                        let _ = Spmv.parallelized(&csr_matrix, &random_vector);
-                    });
+                    b.iter(|| Spmv.parallelized(&csr_matrix, &random_vector));
                 });
             });
         }
