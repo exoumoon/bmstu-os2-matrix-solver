@@ -13,5 +13,5 @@ const STYLES: Styles = Styles::styled()
 #[command(styles(STYLES))]
 pub struct Options {
     /// (Optional) path to an .mtx file containing the target matrix.
-    pub matrix_path: Option<PathBuf>,
+    pub matrix_path: PathBuf,
 }

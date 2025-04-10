@@ -1,4 +1,4 @@
-use super::bicgstab_preconditioned;
+use bmstu_os2_matrix_solver::bicgstab_preconditioned;
 use nalgebra_sparse::CsrMatrix;
 use rayon::ThreadPoolBuilder;
 use std::time::Instant;
