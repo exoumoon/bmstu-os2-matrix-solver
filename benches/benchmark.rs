@@ -1,5 +1,6 @@
-use bmstu_os2_matrix_solver::{jacobi_preconditioner, Spmv};
-use criterion::{criterion_group, criterion_main, Criterion};
+use bmstu_os2_matrix_solver::{dot_product_scalar, dot_product_simd, jacobi_preconditioner, Spmv};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use nalgebra::DVector;
 use nalgebra_sparse::{io, CsrMatrix};
 use rand::Rng;
 use rayon::ThreadPoolBuilder;
@@ -48,7 +49,7 @@ fn spmv_benchmarks(criterion: &mut Criterion) {
 fn preconditioner_benchmarks(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("preconditioners");
     group
-        .warm_up_time(Duration::from_secs(5))
+        .warm_up_time(Duration::from_secs(2))
         .measurement_time(Duration::from_secs(5));
 
     for mtx_path in MTX_PATHS {
@@ -62,5 +63,50 @@ fn preconditioner_benchmarks(criterion: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, spmv_benchmarks, preconditioner_benchmarks);
+fn dotproduct_benchmarks(criterion: &mut Criterion) {
+    let mut rng = rand::rng();
+    let mut group = criterion.benchmark_group("dotproduct");
+    group
+        .warm_up_time(Duration::from_secs(2))
+        .measurement_time(Duration::from_secs(3));
+
+    for vector_length in (16..=20_u32).map(|power| 2_usize.pow(power)) {
+        let vec_a = (0..vector_length)
+            .map(|_| rng.random::<f64>())
+            .collect::<Vec<_>>();
+        let vec_b = (0..vector_length)
+            .map(|_| rng.random::<f64>())
+            .collect::<Vec<_>>();
+
+        let id = format!("scalar-len{vector_length}");
+        group.bench_function(&id, |b| {
+            b.iter(|| {
+                let _ = black_box(dot_product_scalar(&vec_a, &vec_b));
+            });
+        });
+
+        let id = format!("simd-len{vector_length}");
+        group.bench_function(&id, |b| {
+            b.iter(|| {
+                let _ = black_box(dot_product_simd(&vec_a, &vec_b));
+            });
+        });
+
+        let dvec_a = DVector::from_vec(vec_a);
+        let dvec_b = DVector::from_vec(vec_b);
+        let id = format!("nalgebra_dvec-len{vector_length}");
+        group.bench_function(&id, |b| {
+            b.iter(|| {
+                let _ = black_box(dvec_a.dot(&dvec_b));
+            });
+        });
+    }
+}
+
+criterion_group!(
+    benches,
+    spmv_benchmarks,
+    preconditioner_benchmarks,
+    dotproduct_benchmarks
+);
 criterion_main!(benches);

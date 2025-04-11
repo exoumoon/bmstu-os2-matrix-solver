@@ -97,7 +97,8 @@ pub fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> Vec<f64> {
     result
 }
 
-fn dot_product(vector_a: &[f64], vector_b: &[f64]) -> f64 {
+#[must_use]
+pub fn dot_product_simd(vector_a: &[f64], vector_b: &[f64]) -> f64 {
     const LANES: usize = 8;
     type SimdType = Simd<f64, LANES>;
 
@@ -120,8 +121,17 @@ fn dot_product(vector_a: &[f64], vector_b: &[f64]) -> f64 {
     total
 }
 
+#[must_use]
+pub fn dot_product_scalar(vector_a: &[f64], vector_b: &[f64]) -> f64 {
+    vector_a
+        .iter()
+        .zip(vector_b.iter())
+        .map(|(a, b)| a * b)
+        .sum()
+}
+
 fn norm(vector: &[f64]) -> f64 {
-    dot_product(vector, vector).sqrt()
+    dot_product_simd(vector, vector).sqrt()
 }
 
 #[instrument(skip(matrix, vector))]
@@ -179,7 +189,7 @@ pub fn bicgstab_preconditioned(
                 last_checkpoint = Instant::now();
             }
         }
-        let rho_new = dot_product(&r_tld, &r);
+        let rho_new = dot_product_simd(&r_tld, &r);
         if rho_new.abs() < f64::EPSILON {
             return Err("Breakdown: rho ~ 0");
         }
@@ -193,7 +203,7 @@ pub fn bicgstab_preconditioned(
 
         let p_hat = apply_preconditioner(&p);
         v = Spmv.parallelized(matrix, &p_hat);
-        alpha = rho / dot_product(&r_tld, &v);
+        alpha = rho / dot_product_simd(&r_tld, &v);
         let s: Vec<f64> = r
             .iter()
             .zip(v.iter())
@@ -209,7 +219,7 @@ pub fn bicgstab_preconditioned(
 
         let s_hat = apply_preconditioner(&s);
         let t = Spmv.parallelized(matrix, &s_hat);
-        omega = dot_product(&t, &s) / dot_product(&t, &t);
+        omega = dot_product_simd(&t, &s) / dot_product_simd(&t, &t);
 
         for i in 0..n {
             x[i] += alpha * p_hat[i] + omega * s_hat[i];
