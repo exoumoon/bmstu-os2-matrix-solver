@@ -35,6 +35,7 @@ itertools = "0.14.0"
 matrixcompare = "0.3.0"
 nalgebra = "0.33.2"
 nalgebra-sparse = { version = "0.10.0", features = ["compare", "io"] }
+plotly = "0.12.1"
 rand = "0.9.0"
 rayon = "1.10.0"
 thiserror = "2.0.12"

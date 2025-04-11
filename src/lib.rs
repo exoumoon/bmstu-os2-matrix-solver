@@ -18,18 +18,8 @@ pub struct Spmv;
 
 impl Spmv {
     /// Serial multiplication of a sparse matrix by a dense vector.
-    #[instrument(
-        name = "serial_spmv"
-        skip_all,
-        fields(
-            matrix.rows = matrix.nrows(),
-            matrix.columns = matrix.ncols(),
-            matrix.nonzero_cells = matrix.nnz(),
-            vector.len = vector.len(),
-        ),
-    )]
+    #[must_use]
     pub fn serial(&self, matrix: &CsrMatrix<f64>, vector: &[f64]) -> Vec<f64> {
-        let start = Instant::now();
         let result: Vec<f64> = matrix
             .row_iter()
             .map(|row| {
@@ -41,25 +31,12 @@ impl Spmv {
                     .sum::<f64>()
             })
             .collect();
-        tracing::debug!(op_duration = ?start.elapsed(), "Multiplied sparse matrix by vector");
         result
     }
 
     /// Parallelized multiplication of a sparse matrix by a dense vector.
-    #[instrument(
-        name = "parallelized_spmv"
-        skip_all,
-        fields(
-            matrix.rows = matrix.nrows(),
-            matrix.columns = matrix.ncols(),
-            matrix.nonzero_cells = matrix.nnz(),
-            vector.len = vector.len(),
-            threads.num = rayon::current_num_threads(),
-            threads.max = rayon::max_num_threads(),
-        ),
-    )]
+    #[must_use]
     pub fn parallelized(&self, matrix: &CsrMatrix<f64>, vector: &[f64]) -> Vec<f64> {
-        let start = Instant::now();
         let result: Vec<f64> = matrix
             .row_iter()
             .collect::<Vec<_>>()
@@ -73,7 +50,6 @@ impl Spmv {
                     .sum::<f64>()
             })
             .collect();
-        tracing::debug!(op_duration = ?start.elapsed(), "Multiplied sparse matrix by vector");
         result
     }
 }
@@ -179,7 +155,7 @@ pub fn bicgstab_preconditioned(
                 let estimated_completion_secs = start.elapsed().as_secs_f64() / completion;
                 let estimated_remaining =
                     Duration::from_secs_f64(estimated_completion_secs) - start.elapsed();
-                tracing::info!(
+                tracing::debug!(
                     completion,
                     ?since_checkpoint,
                     ?estimated_remaining,

@@ -8,35 +8,32 @@
 use clap::Parser;
 use color_eyre::eyre::Report;
 use nalgebra_sparse::{io, CsrMatrix};
-use rand::Rng;
 
 pub mod benchmark;
 pub mod cli;
 
-pub const FLOAT_TOLERANCE: f64 = 10e-4;
+pub const FLOAT_TOLERANCE: f64 = 10e-6;
 pub const MAX_BICGSTAB_ITERATIONS: usize = 1_000_000;
-pub const MAX_RAYON_THREADS: usize = 100;
+pub const MAX_RAYON_THREADS: usize = 20;
 
 fn main() -> Result<(), Report> {
     color_eyre::install()?;
     install_tracing()?;
-    let mut rng = rand::rng();
+
     let options = cli::Options::parse();
     let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(options.matrix_path)?;
-
     let csr_matrix = CsrMatrix::from(&coo_matrix);
-    let vector = (0..csr_matrix.nrows())
-        .map(|_| rng.random::<f64>())
-        .collect::<Vec<_>>();
-    dbg!(&vector);
+    let rhs = bmstu_os2_matrix_solver::io::load_vector_from_matrix_market_file(options.rhs_path)?;
 
-    // let _ = benchmark::run_benchmark(
-    //     &csr_matrix,
-    //     &vector,
-    //     FLOAT_TOLERANCE,
-    //     MAX_BICGSTAB_ITERATIONS,
-    //     MAX_RAYON_THREADS,
-    // );
+    let results = benchmark::run_benchmark(
+        &csr_matrix,
+        &rhs,
+        FLOAT_TOLERANCE,
+        MAX_BICGSTAB_ITERATIONS,
+        MAX_RAYON_THREADS,
+    );
+
+    results.create_plots().show();
 
     Ok(())
 }

@@ -12,6 +12,9 @@ const STYLES: Styles = Styles::styled()
 #[derive(Parser, Clone, Debug)]
 #[command(styles(STYLES))]
 pub struct Options {
-    /// (Optional) path to an .mtx file containing the target matrix.
+    /// Path to an .mtx file containing the target matrix.
     pub matrix_path: PathBuf,
+
+    /// Path to an .mtx file containing the target RHS.
+    pub rhs_path: PathBuf,
 }
