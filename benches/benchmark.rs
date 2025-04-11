@@ -1,6 +1,5 @@
 use bmstu_os2_matrix_solver::{dot_product_scalar, dot_product_simd, jacobi_preconditioner, Spmv};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use nalgebra::DVector;
 use nalgebra_sparse::{io, CsrMatrix};
 use rand::Rng;
 use rayon::ThreadPoolBuilder;
@@ -89,15 +88,6 @@ fn dotproduct_benchmarks(criterion: &mut Criterion) {
         group.bench_function(&id, |b| {
             b.iter(|| {
                 let _ = black_box(dot_product_simd(&vec_a, &vec_b));
-            });
-        });
-
-        let dvec_a = DVector::from_vec(vec_a);
-        let dvec_b = DVector::from_vec(vec_b);
-        let id = format!("nalgebra_dvec-len{vector_length}");
-        group.bench_function(&id, |b| {
-            b.iter(|| {
-                let _ = black_box(dvec_a.dot(&dvec_b));
             });
         });
     }
