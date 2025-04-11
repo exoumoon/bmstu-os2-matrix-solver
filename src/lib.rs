@@ -232,3 +232,74 @@ pub fn bicgstab_preconditioned(
 
     Err("BiCGSTAB did not converge within the maximum number of iterations")
 }
+
+pub mod io {
+    use nalgebra_sparse::io::{self, MatrixMarketError};
+    use std::path::Path;
+
+    #[expect(clippy::missing_errors_doc)]
+    pub fn load_vector_from_matrix_market_file<P>(path: P) -> Result<Vec<f64>, MatrixMarketError>
+    where
+        P: AsRef<Path>,
+    {
+        let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(path)?;
+        let mut vector = vec![0.0; coo_matrix.nrows()];
+
+        for (index, value) in coo_matrix.row_indices().iter().zip(coo_matrix.values()) {
+            vector[*index] = *value;
+        }
+
+        Ok(vector)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Spmv;
+    use nalgebra::DVector;
+    use nalgebra_sparse::{io, CsrMatrix};
+
+    #[rstest::rstest]
+    #[case("assets/mtx/e20r0000_rhs1.mtx")]
+    #[case("assets/mtx/e40r0000_rhs1.mtx")]
+    #[case("assets/mtx/fidap011_rhs1.mtx")]
+    fn load_rhs_vector(#[case] path: &str) {
+        let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(path).unwrap();
+        let mut vector = vec![0.0; coo_matrix.nrows()];
+
+        for (index, value) in coo_matrix.row_indices().iter().zip(coo_matrix.values()) {
+            vector[*index] = *value;
+        }
+
+        eprintln!("vector: {vector:?}");
+        assert_eq!(vector.len(), coo_matrix.nrows());
+    }
+
+    #[rstest::rstest]
+    // NOTE: These take way too long.
+    // #[case("assets/mtx/e20r0000.mtx", "assets/mtx/e20r0000_rhs1.mtx")]
+    // #[case("assets/mtx/e40r0000.mtx", "assets/mtx/e40r0000_rhs1.mtx")]
+    #[case("assets/mtx/fidap011.mtx", "assets/mtx/fidap011_rhs1.mtx")]
+    fn bicgstab(#[case] matrix_path: &str, #[case] rhs_path: &str) {
+        use std::f64::consts::E;
+
+        let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(matrix_path).unwrap();
+        let a = CsrMatrix::from(&coo_matrix);
+        let b = crate::io::load_vector_from_matrix_market_file(rhs_path).unwrap();
+        let x = crate::bicgstab_preconditioned(&a, &b, 10e-4, 1_000_000).unwrap();
+
+        let ax = Spmv.parallelized(&a, &x);
+        let dv_b = DVector::from_vec(b);
+        let dv_ax = DVector::from_vec(ax);
+
+        let ax_minus_b = dv_ax - dv_b.clone();
+        let ax_minus_b_norm = ax_minus_b.norm();
+        let b_norm = dv_b.norm();
+        dbg!(a.nrows(), ax_minus_b_norm, b_norm, ax_minus_b_norm / b_norm);
+
+        match a.nrows() {
+            ..10_000 => assert!(ax_minus_b_norm <= E),
+            10_000.. => assert!(ax_minus_b_norm / b_norm <= E),
+        }
+    }
+}
