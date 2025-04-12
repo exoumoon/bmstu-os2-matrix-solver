@@ -12,12 +12,12 @@ use std::time::Instant;
 #[derive(Debug, Clone)]
 #[must_use]
 pub struct BenchmarkResult {
-    pub p: usize,
-    pub t1: f64,
-    pub tp: f64,
+    pub num_threads: usize,
+    pub time_serial: f64,
+    pub time_parallel: f64,
     pub speedup: f64,
     pub efficiency: f64,
-    pub alpha: f64,
+    pub serial_op_share: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -26,15 +26,21 @@ pub struct BenchmarkResults {
     results: Vec<BenchmarkResult>,
 }
 
+impl From<Vec<BenchmarkResult>> for BenchmarkResults {
+    fn from(results: Vec<BenchmarkResult>) -> Self {
+        Self { results }
+    }
+}
+
 impl BenchmarkResults {
     #[must_use]
     pub fn create_plots(&self) -> Plot {
-        let thread_points = self.results.iter().map(|r| r.p).collect_vec();
-        let t1_points = self.results.iter().map(|r| r.t1).collect_vec();
-        let time_points = self.results.iter().map(|r| r.tp).collect_vec();
+        let thread_points = self.results.iter().map(|r| r.num_threads).collect_vec();
+        let t1_points = self.results.iter().map(|r| r.time_serial).collect_vec();
+        let time_points = self.results.iter().map(|r| r.time_parallel).collect_vec();
         let speedup_points = self.results.iter().map(|r| r.speedup).collect_vec();
         let efficiency_points = self.results.iter().map(|r| r.efficiency).collect_vec();
-        let alpha_points = self.results.iter().map(|r| r.alpha).collect_vec();
+        let alpha_points = self.results.iter().map(|r| r.serial_op_share).collect_vec();
 
         let t1_trace = Scatter::new(thread_points.clone(), t1_points)
             .name("Время с одним потоком (t₁)")
@@ -53,7 +59,7 @@ impl BenchmarkResults {
             .y_axis("y3")
             .mode(Mode::LinesMarkersText);
         let alpha_trace = Scatter::new(thread_points, alpha_points)
-            .name("Альфа (α)")
+            .name("Доля последовательных вычислений (α)")
             .x_axis("x4")
             .y_axis("y4")
             .mode(Mode::LinesMarkersText);
@@ -75,17 +81,17 @@ impl BenchmarkResults {
 }
 
 #[must_use]
-pub fn amdahl_alpha(p: f64, sp: f64) -> f64 {
-    if p <= 1.0 + f64::EPSILON || sp <= 0.0 || !sp.is_finite() {
+pub fn amdahl_alpha(num_threads: usize, speedup: f64) -> f64 {
+    if num_threads <= 1 || speedup <= 0.0 || !speedup.is_finite() {
         return 1.0;
     }
 
-    let denom = p - 1.0;
-    if denom.abs() < f64::EPSILON {
+    let denominator = num_threads as f64 - 1.0;
+    if denominator.abs() < f64::EPSILON {
         return 1.0;
     }
 
-    let alpha = (p / sp - 1.0) / denom;
+    let alpha = (num_threads as f64 / speedup - 1.0) / denominator;
     alpha.clamp(0.0, 1.0)
 }
 
@@ -117,34 +123,34 @@ pub fn run_benchmark(
 
         let sp = t1 / elapsed;
         let ep = sp / num_threads as f64;
-        let alpha = amdahl_alpha(num_threads as f64, sp);
+        let alpha = amdahl_alpha(num_threads, sp);
 
         let result = BenchmarkResult {
-            p: num_threads,
-            t1,
-            tp: elapsed,
+            num_threads,
+            time_serial: t1,
+            time_parallel: elapsed,
             speedup: sp,
             efficiency: ep,
-            alpha,
+            serial_op_share: alpha,
         };
 
         results.push(result.clone());
         println!("{result}");
     }
 
-    BenchmarkResults { results }
+    BenchmarkResults::from(results)
 }
 
 impl fmt::Display for BenchmarkResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f,
-            "p = {:>3} | t₁ = {:>7.4}s | tₚ = {:>7.4}s | Sₚ = {:>5.2} | Eₚ = {:>6.2}% | α = {:>5.3}",
-            self.p.bold(),
-            self.t1.red().bold(),
-            self.tp.yellow().bold(),
-            self.speedup.bright_yellow().bold(),
-            (self.efficiency * 100.0).bright_red().bold(),
-            self.alpha.bright_magenta().bold(),
+            "P = {p:>3} | t₁ = {t1:>7.4}s | tₚ = {tp:>7.4}s | Sₚ = {sp:>5.2} | Eₚ = {e:>6.2}% | α = {a:>5.3}",
+            p = self.num_threads.bold(),
+            t1 = self.time_serial.red().bold(),
+            tp = self.time_parallel.yellow().bold(),
+            sp = self.speedup.bright_yellow().bold(),
+            e = (self.efficiency * 100.0).bright_red().bold(),
+            a = self.serial_op_share.bright_magenta().bold(),
         )?;
         Ok(())
     }
