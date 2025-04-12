@@ -1,4 +1,4 @@
-use bmstu_os2_matrix_solver::bicgstab_preconditioned;
+use crate::bicgstab_preconditioned;
 use color_eyre::owo_colors::OwoColorize;
 use itertools::Itertools;
 use nalgebra_sparse::CsrMatrix;
@@ -99,46 +99,45 @@ pub fn run_benchmark(
     matrix: &CsrMatrix<f64>,
     b: &[f64],
     tolerance: f64,
-    iterations: usize,
+    max_iterations: usize,
     max_threads: usize,
-) -> BenchmarkResults {
+) -> Result<BenchmarkResults, color_eyre::eyre::Report> {
     let mut results = Vec::new();
-    let mut t1 = 0.0;
+    let mut time_serial = 0.0;
 
     for num_threads in 1..=max_threads {
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .expect("Failed to build thread pool");
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build()?;
 
         let start = Instant::now();
-        pool.install(|| {
-            bicgstab_preconditioned(matrix, b, tolerance, iterations).unwrap();
-        });
-        let elapsed = start.elapsed().as_secs_f64();
-
-        if num_threads == 1 {
-            t1 = elapsed;
+        let solution =
+            pool.install(|| bicgstab_preconditioned(matrix, b, tolerance, max_iterations));
+        let elapsed_seconds = start.elapsed().as_secs_f64();
+        if let Err(error) = solution {
+            tracing::error!(?num_threads, ?error, "BiCGSTAB failed");
+            continue;
         }
 
-        let sp = t1 / elapsed;
-        let ep = sp / num_threads as f64;
-        let alpha = amdahl_alpha(num_threads, sp);
+        if num_threads == 1 {
+            time_serial = elapsed_seconds;
+        }
+
+        let speedup = time_serial / elapsed_seconds;
+        let efficiency = speedup / num_threads as f64;
+        let serial_op_share = amdahl_alpha(num_threads, speedup);
 
         let result = BenchmarkResult {
             num_threads,
-            time_serial: t1,
-            time_parallel: elapsed,
-            speedup: sp,
-            efficiency: ep,
-            serial_op_share: alpha,
+            time_serial,
+            time_parallel: elapsed_seconds,
+            speedup,
+            efficiency,
+            serial_op_share,
         };
-
-        results.push(result.clone());
         println!("{result}");
+        results.push(result);
     }
 
-    BenchmarkResults::from(results)
+    Ok(BenchmarkResults::from(results))
 }
 
 impl fmt::Display for BenchmarkResult {

@@ -1,8 +1,10 @@
 #![feature(portable_simd)]
-#![expect(
+#![allow(
     clippy::cast_precision_loss,
     clippy::redundant_clone,
-    clippy::suboptimal_flops
+    clippy::suboptimal_flops,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc
 )]
 
 use nalgebra_sparse::CsrMatrix;
@@ -11,6 +13,12 @@ use std::simd::num::SimdFloat;
 use std::simd::Simd;
 use std::time::{Duration, Instant};
 use tracing::instrument;
+
+pub mod benchmark;
+
+pub const FLOAT_TOLERANCE: f64 = 10e-6;
+pub const MAX_ITERATIONS: usize = 1_000_000;
+pub const MAX_THREADS: usize = 20;
 
 #[derive(Debug)]
 #[must_use]
@@ -109,13 +117,23 @@ fn norm(vector: &[f64]) -> f64 {
     dot_product_simd(vector, vector).sqrt()
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum BicgstabError {
+    #[error("Failed to find a solution within the iteration limit")]
+    NoConvergence,
+    #[error("`rho` turned near-zero")]
+    RhoClamped,
+    #[error("`omega` turned near-zero")]
+    OmegaClamped,
+}
+
 #[instrument(skip(matrix, vector))]
 pub fn bicgstab_preconditioned(
     matrix: &CsrMatrix<f64>,
     vector: &[f64],
     tolerance: f64,
     num_iterations: usize,
-) -> Result<Vec<f64>, &'static str> {
+) -> Result<Vec<f64>, BicgstabError> {
     let n = matrix.ncols();
     let mut x = vec![0.0; n];
     let m_inv = jacobi_preconditioner(matrix);
@@ -166,7 +184,7 @@ pub fn bicgstab_preconditioned(
         }
         let rho_new = dot_product_simd(&r_tld, &r);
         if rho_new.abs() < f64::EPSILON {
-            return Err("Breakdown: rho ~ 0");
+            return Err(BicgstabError::RhoClamped);
         }
 
         let beta = (rho_new / rho) * (alpha / omega);
@@ -211,18 +229,17 @@ pub fn bicgstab_preconditioned(
         }
 
         if omega.abs() < f64::EPSILON {
-            return Err("Breakdown: omega ~ 0");
+            return Err(BicgstabError::OmegaClamped);
         }
     }
 
-    Err("BiCGSTAB did not converge within the maximum number of iterations")
+    Err(BicgstabError::NoConvergence)
 }
 
 pub mod io {
     use nalgebra_sparse::io::{self, MatrixMarketError};
     use std::path::Path;
 
-    #[expect(clippy::missing_errors_doc)]
     pub fn load_vector_from_matrix_market_file<P>(path: P) -> Result<Vec<f64>, MatrixMarketError>
     where
         P: AsRef<Path>,
@@ -240,7 +257,8 @@ pub mod io {
 
 #[cfg(test)]
 mod tests {
-    use crate::Spmv;
+    use crate::{Spmv, FLOAT_TOLERANCE, MAX_ITERATIONS};
+    use color_eyre::eyre::Report;
     use nalgebra::DVector;
     use nalgebra_sparse::{io, CsrMatrix};
 
@@ -265,13 +283,13 @@ mod tests {
     // #[case("assets/mtx/e20r0000.mtx", "assets/mtx/e20r0000_rhs1.mtx")]
     // #[case("assets/mtx/e40r0000.mtx", "assets/mtx/e40r0000_rhs1.mtx")]
     #[case("assets/mtx/fidap011.mtx", "assets/mtx/fidap011_rhs1.mtx")]
-    fn bicgstab(#[case] matrix_path: &str, #[case] rhs_path: &str) {
+    fn bicgstab(#[case] matrix_path: &str, #[case] rhs_path: &str) -> Result<(), Report> {
         use std::f64::consts::E;
 
-        let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(matrix_path).unwrap();
+        let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(matrix_path)?;
         let a = CsrMatrix::from(&coo_matrix);
-        let b = crate::io::load_vector_from_matrix_market_file(rhs_path).unwrap();
-        let x = crate::bicgstab_preconditioned(&a, &b, 10e-4, 1_000_000).unwrap();
+        let b = crate::io::load_vector_from_matrix_market_file(rhs_path)?;
+        let x = crate::bicgstab_preconditioned(&a, &b, FLOAT_TOLERANCE, MAX_ITERATIONS)?;
 
         let ax = Spmv.parallelized(&a, &x);
         let dv_b = DVector::from_vec(b);
@@ -283,8 +301,13 @@ mod tests {
         dbg!(a.nrows(), ax_minus_b_norm, b_norm, ax_minus_b_norm / b_norm);
 
         match a.nrows() {
+            // NOTE: Verification:
+            // ||Ax - b||         < E при dim < 10.000
+            // ||Ax - b|| / ||b|| < E при dim >= 10.000
             ..10_000 => assert!(ax_minus_b_norm <= E),
             10_000.. => assert!(ax_minus_b_norm / b_norm <= E),
         }
+
+        Ok(())
     }
 }

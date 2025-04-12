@@ -1,20 +1,9 @@
-#![feature(portable_simd)]
-#![expect(clippy::cast_precision_loss, clippy::missing_panics_doc)]
-
-// NOTE: Verification:
-// ||Ax - b||         < e при dim < 10.000
-// ||Ax - b|| / ||b|| < e при dim >= 10.000
-
+use bmstu_os2_matrix_solver::{benchmark, FLOAT_TOLERANCE, MAX_ITERATIONS, MAX_THREADS};
 use clap::Parser;
 use color_eyre::eyre::Report;
 use nalgebra_sparse::{io, CsrMatrix};
 
-pub mod benchmark;
 pub mod cli;
-
-pub const FLOAT_TOLERANCE: f64 = 10e-6;
-pub const MAX_BICGSTAB_ITERATIONS: usize = 1_000_000;
-pub const MAX_RAYON_THREADS: usize = 20;
 
 fn main() -> Result<(), Report> {
     color_eyre::install()?;
@@ -29,9 +18,9 @@ fn main() -> Result<(), Report> {
         &csr_matrix,
         &rhs,
         FLOAT_TOLERANCE,
-        MAX_BICGSTAB_ITERATIONS,
-        MAX_RAYON_THREADS,
-    );
+        MAX_ITERATIONS,
+        MAX_THREADS,
+    )?;
 
     results.create_plots().show();
 
