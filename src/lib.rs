@@ -63,7 +63,7 @@ impl Spmv {
 
 #[must_use]
 pub fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> Vec<f64> {
-    let mut result = vec![0.0; matrix.nrows()];
+    let mut result = vec![1.0; matrix.nrows()];
     for (row_index, row) in matrix.row_iter().enumerate() {
         let diagonal_index = row
             .col_indices()
@@ -302,8 +302,8 @@ mod tests {
 
         match a.nrows() {
             // NOTE: Verification:
-            // ||Ax - b||         < E при dim < 10.000
-            // ||Ax - b|| / ||b|| < E при dim >= 10.000
+            // ||Ax - b||         < E, при dim < 10.000
+            // ||Ax - b|| / ||b|| < E, при dim >= 10.000
             ..10_000 => assert!(ax_minus_b_norm <= E),
             10_000.. => assert!(ax_minus_b_norm / b_norm <= E),
         }
