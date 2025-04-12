@@ -74,11 +74,19 @@ impl BenchmarkResults {
     }
 }
 
-fn amdahl_alpha(p: f64, sp: f64) -> f64 {
-    if (p - 1.0).abs() < f64::EPSILON {
-        return 0.0;
+#[must_use]
+pub fn amdahl_alpha(p: f64, sp: f64) -> f64 {
+    if p <= 1.0 + f64::EPSILON || sp <= 0.0 || !sp.is_finite() {
+        return 1.0;
     }
-    (1.0 - 1.0 / p) / (1.0 / sp - 1.0 / p)
+
+    let denom = p - 1.0;
+    if denom.abs() < f64::EPSILON {
+        return 1.0;
+    }
+
+    let alpha = (p / sp - 1.0) / denom;
+    alpha.clamp(0.0, 1.0)
 }
 
 pub fn run_benchmark(
