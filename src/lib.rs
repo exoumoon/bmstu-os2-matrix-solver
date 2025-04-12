@@ -1,18 +1,18 @@
-#![feature(portable_simd)]
+#![feature(portable_simd, slice_pattern)]
 #![allow(
     clippy::cast_precision_loss,
     clippy::redundant_clone,
     clippy::suboptimal_flops,
     clippy::missing_errors_doc,
-    clippy::missing_panics_doc
+    clippy::missing_panics_doc,
+    clippy::many_single_char_names
 )]
 
+use nalgebra::DVector;
 use nalgebra_sparse::CsrMatrix;
 use rayon::prelude::*;
 use std::simd::num::SimdFloat;
 use std::simd::Simd;
-use std::time::{Duration, Instant};
-use tracing::instrument;
 
 pub mod benchmark;
 pub mod io;
@@ -28,7 +28,7 @@ pub struct Spmv;
 impl Spmv {
     /// Serial multiplication of a sparse matrix by a dense vector.
     #[must_use]
-    pub fn serial(&self, matrix: &CsrMatrix<f64>, vector: &[f64]) -> Vec<f64> {
+    pub fn serial(&self, matrix: &CsrMatrix<f64>, vector: &DVector<f64>) -> DVector<f64> {
         let result: Vec<f64> = matrix
             .row_iter()
             .map(|row| {
@@ -39,12 +39,12 @@ impl Spmv {
                     .sum::<f64>()
             })
             .collect();
-        result
+        result.into()
     }
 
     /// Parallelized multiplication of a sparse matrix by a dense vector.
     #[must_use]
-    pub fn parallelized(&self, matrix: &CsrMatrix<f64>, vector: &[f64]) -> Vec<f64> {
+    pub fn parallelized(&self, matrix: &CsrMatrix<f64>, vector: &DVector<f64>) -> DVector<f64> {
         let result: Vec<f64> = matrix
             .row_iter()
             .collect::<Vec<_>>()
@@ -58,12 +58,12 @@ impl Spmv {
                     .sum::<f64>()
             })
             .collect();
-        result
+        result.into()
     }
 }
 
 #[must_use]
-pub fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> Vec<f64> {
+pub fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> DVector<f64> {
     let mut result = vec![1.0; matrix.nrows()];
     for (row_index, row) in matrix.row_iter().enumerate() {
         let diagonal_index = row
@@ -72,13 +72,13 @@ pub fn jacobi_preconditioner(matrix: &CsrMatrix<f64>) -> Vec<f64> {
             .position(|&col_index| col_index == row_index);
         if let Some(index) = diagonal_index {
             let value = row.values()[index];
-            if value != 0.0 {
+            if value.abs() <= f64::EPSILON {
                 result[row_index] = 1.0 / value;
             }
         }
     }
 
-    result
+    result.into()
 }
 
 #[must_use]
@@ -114,119 +114,81 @@ pub fn dot_product_scalar(vector_a: &[f64], vector_b: &[f64]) -> f64 {
         .sum()
 }
 
-fn norm(vector: &[f64]) -> f64 {
-    dot_product_simd(vector, vector).sqrt()
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum BicgstabError {
     #[error("Failed to find a solution within the iteration limit")]
     NoConvergence,
     #[error("`rho` turned near-zero")]
-    RhoClamped,
+    BiOrthogonalityLost,
     #[error("`omega` turned near-zero")]
     OmegaClamped,
 }
 
-#[instrument(skip(matrix, vector))]
 pub fn bicgstab_preconditioned(
     matrix: &CsrMatrix<f64>,
-    vector: &[f64],
-    tolerance: f64,
-    num_iterations: usize,
-) -> Result<Vec<f64>, BicgstabError> {
-    let n = matrix.ncols();
-    let mut x = vec![0.0; n];
-    let m_inv = jacobi_preconditioner(matrix);
+    b: &DVector<f64>,
+    float_tolerance: f64,
+    max_iterations: usize,
+) -> Result<DVector<f64>, BicgstabError> {
+    let dim = matrix.ncols();
 
-    let apply_preconditioner =
-        |v: &[f64]| -> Vec<f64> { v.iter().zip(&m_inv).map(|(vi, mi)| vi * mi).collect() };
+    let m_inv: DVector<f64> = jacobi_preconditioner(matrix);
+    let apply_preconditioner = |v: &DVector<f64>| -> DVector<f64> { v.component_mul(&m_inv) };
 
-    let mut r = {
-        let ax = Spmv.parallelized(matrix, &x);
-        vector
-            .iter()
-            .zip(ax.iter())
-            .map(|(bi, ai)| bi - ai)
-            .collect::<Vec<_>>()
-    };
-
-    let r_tld = r.clone();
+    let mut guess: DVector<f64> = DVector::from_vec(vec![0.0; dim]);
+    let mut residual: DVector<f64> = b - Spmv.parallelized(matrix, &guess);
+    let r_tilda = residual.clone();
     let mut rho = 1.0;
     let mut alpha = 1.0;
     let mut omega = 1.0;
-    let mut v = vec![0.0; n];
-    let mut p = vec![0.0; n];
+    let mut v: DVector<f64> = vec![0.0; dim].into();
+    let mut p: DVector<f64> = vec![0.0; dim].into();
 
-    let normb = norm(vector);
-    if normb == 0.0 {
-        return Ok(x);
+    let normb = b.norm();
+    if normb.abs() <= f64::EPSILON {
+        return Ok(guess);
     }
 
-    let start = Instant::now();
-    let mut last_checkpoint = start;
-    for iter in 0..num_iterations {
-        {
-            if iter > 0 && iter % (num_iterations / 1000) == 0 {
-                let completion = iter as f64 / num_iterations as f64;
-                let since_checkpoint = last_checkpoint.elapsed();
-                let estimated_completion_secs = start.elapsed().as_secs_f64() / completion;
-                let estimated_remaining =
-                    Duration::from_secs_f64(estimated_completion_secs) - start.elapsed();
-                tracing::debug!(
-                    completion,
-                    ?since_checkpoint,
-                    ?estimated_remaining,
-                    ?estimated_completion_secs,
-                    "Completed {iter} of {num_iterations} iterations"
-                );
-                last_checkpoint = Instant::now();
-            }
-        }
-        let rho_new = dot_product_simd(&r_tld, &r);
+    for _ in 0..max_iterations {
+        let rho_new = dot_product_simd(r_tilda.as_slice(), residual.as_slice());
         if rho_new.abs() < f64::EPSILON {
-            return Err(BicgstabError::RhoClamped);
+            return Err(BicgstabError::BiOrthogonalityLost);
         }
 
         let beta = (rho_new / rho) * (alpha / omega);
-        for i in 0..n {
-            p[i] = r[i] + beta * (p[i] - omega * v[i]);
+        for i in 0..dim {
+            p[i] = residual[i] + beta * (p[i] - omega * v[i]);
         }
 
         rho = rho_new;
 
         let p_hat = apply_preconditioner(&p);
         v = Spmv.parallelized(matrix, &p_hat);
-        alpha = rho / dot_product_simd(&r_tld, &v);
-        let s: Vec<f64> = r
-            .iter()
-            .zip(v.iter())
-            .map(|(ri, vi)| ri - alpha * vi)
-            .collect();
+        alpha = rho / dot_product_simd(r_tilda.as_slice(), v.as_slice());
+        let s: DVector<f64> = residual - (alpha * v.clone());
 
-        if norm(&s) < tolerance * normb {
-            for i in 0..n {
-                x[i] += alpha * p_hat[i];
+        if s.norm() < float_tolerance * normb {
+            for i in 0..dim {
+                guess[i] += alpha * p_hat[i];
             }
-            return Ok(x);
+            return Ok(guess);
         }
 
         let s_hat = apply_preconditioner(&s);
         let t = Spmv.parallelized(matrix, &s_hat);
-        omega = dot_product_simd(&t, &s) / dot_product_simd(&t, &t);
+        omega = dot_product_simd(t.as_slice(), s.as_slice())
+            / dot_product_simd(t.as_slice(), t.as_slice());
 
-        for i in 0..n {
-            x[i] += alpha * p_hat[i] + omega * s_hat[i];
+        for i in 0..dim {
+            guess[i] += alpha * p_hat[i] + omega * s_hat[i];
         }
 
-        r = s
-            .iter()
-            .zip(t.iter())
-            .map(|(si, ti)| si - omega * ti)
-            .collect();
+        // PERF: SIMD-accelerated in-place `residual = s - omega * t`.
+        residual = s;
+        residual.axpy(-omega, &t, 1.0);
 
-        if norm(&r) < tolerance * normb {
-            return Ok(x);
+        if residual.norm() < float_tolerance * normb {
+            return Ok(guess);
         }
 
         if omega.abs() < f64::EPSILON {
@@ -241,13 +203,12 @@ pub fn bicgstab_preconditioned(
 mod tests {
     use crate::{Spmv, FLOAT_TOLERANCE, MAX_ITERATIONS};
     use color_eyre::eyre::Report;
-    use nalgebra::DVector;
     use nalgebra_sparse::{io, CsrMatrix};
 
     #[rstest::rstest]
-    #[case("assets/mtx/e20r0000_rhs1.mtx")]
-    #[case("assets/mtx/e40r0000_rhs1.mtx")]
-    #[case("assets/mtx/fidap011_rhs1.mtx")]
+    #[case::e20r0000("assets/mtx/e20r0000_rhs1.mtx")]
+    #[case::e40r0000("assets/mtx/e40r0000_rhs1.mtx")]
+    #[case::fidap011("assets/mtx/fidap011_rhs1.mtx")]
     fn load_rhs_vector(#[case] path: &str) {
         let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(path).unwrap();
         let mut vector = vec![0.0; coo_matrix.nrows()];
@@ -261,25 +222,20 @@ mod tests {
     }
 
     #[rstest::rstest]
-    // NOTE: These take way too long.
-    // #[case("assets/mtx/e20r0000.mtx", "assets/mtx/e20r0000_rhs1.mtx")]
-    // #[case("assets/mtx/e40r0000.mtx", "assets/mtx/e40r0000_rhs1.mtx")]
-    #[case("assets/mtx/fidap011.mtx", "assets/mtx/fidap011_rhs1.mtx")]
+    // #[case::fidapm37("assets/mtx/fidapm37.mtx", "assets/mtx/fidapm37_rhs1.mtx")]
+    #[case::fidap011("assets/mtx/fidap011.mtx", "assets/mtx/fidap011_rhs1.mtx")]
     fn bicgstab(#[case] matrix_path: &str, #[case] rhs_path: &str) -> Result<(), Report> {
         use std::f64::consts::E;
+        let _ = color_eyre::install();
 
         let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(matrix_path)?;
         let a = CsrMatrix::from(&coo_matrix);
         let b = crate::io::load_vector_from_matrix_market_file(rhs_path)?;
         let x = crate::bicgstab_preconditioned(&a, &b, FLOAT_TOLERANCE, MAX_ITERATIONS)?;
-
         let ax = Spmv.parallelized(&a, &x);
-        let dv_b = DVector::from_vec(b);
-        let dv_ax = DVector::from_vec(ax);
 
-        let ax_minus_b = dv_ax - dv_b.clone();
-        let ax_minus_b_norm = ax_minus_b.norm();
-        let b_norm = dv_b.norm();
+        let ax_minus_b_norm = (ax - b.clone()).norm();
+        let b_norm = b.norm();
         dbg!(a.nrows(), ax_minus_b_norm, b_norm, ax_minus_b_norm / b_norm);
 
         match a.nrows() {

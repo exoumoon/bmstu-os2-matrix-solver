@@ -17,4 +17,12 @@ pub struct Options {
 
     /// Path to an .mtx file containing the target RHS.
     pub rhs_path: PathBuf,
+
+    /// From what amount of threads to start benchmarking.
+    #[arg(long, default_value_t = 1_u8)]
+    pub min_threads: u8,
+
+    /// At what amount of threads to stop benchmarking.
+    #[arg(long, default_value_t = 20_u8)]
+    pub max_threads: u8,
 }

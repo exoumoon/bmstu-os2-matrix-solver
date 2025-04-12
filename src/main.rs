@@ -1,4 +1,4 @@
-use bmstu_os2_matrix_solver::{benchmark, FLOAT_TOLERANCE, MAX_ITERATIONS, MAX_THREADS};
+use bmstu_os2_matrix_solver::{benchmark, FLOAT_TOLERANCE, MAX_ITERATIONS};
 use clap::Parser;
 use color_eyre::eyre::Report;
 use nalgebra_sparse::{io, CsrMatrix};
@@ -19,7 +19,8 @@ fn main() -> Result<(), Report> {
         &rhs,
         FLOAT_TOLERANCE,
         MAX_ITERATIONS,
-        MAX_THREADS,
+        options.min_threads,
+        options.max_threads,
     )?;
 
     results.create_plots().show();

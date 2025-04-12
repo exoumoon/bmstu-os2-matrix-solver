@@ -1,7 +1,8 @@
+use nalgebra::DVector;
 use nalgebra_sparse::io::{self, MatrixMarketError};
 use std::path::Path;
 
-pub fn load_vector_from_matrix_market_file<P>(path: P) -> Result<Vec<f64>, MatrixMarketError>
+pub fn load_vector_from_matrix_market_file<P>(path: P) -> Result<DVector<f64>, MatrixMarketError>
 where
     P: AsRef<Path>,
 {
@@ -12,5 +13,5 @@ where
         vector[*index] = *value;
     }
 
-    Ok(vector)
+    Ok(vector.into())
 }

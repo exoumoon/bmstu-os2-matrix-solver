@@ -1,5 +1,6 @@
 use bmstu_os2_matrix_solver::{dot_product_scalar, dot_product_simd, jacobi_preconditioner, Spmv};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use nalgebra::DVector;
 use nalgebra_sparse::{io, CsrMatrix};
 use rand::Rng;
 use rayon::ThreadPoolBuilder;
@@ -21,9 +22,10 @@ fn spmv_benchmarks(criterion: &mut Criterion) {
     for mtx_path in MTX_PATHS {
         let coo_matrix = io::load_coo_from_matrix_market_file::<f64, _>(mtx_path).unwrap();
         let csr_matrix = CsrMatrix::from(&coo_matrix);
-        let random_vector = (0..csr_matrix.nrows())
+        let random_vector: DVector<f64> = (0..csr_matrix.nrows())
             .map(|_| rng.random::<f64>())
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+            .into();
 
         let id = format!("serial-{mtx_path}");
         group.bench_function(&id, |b| {

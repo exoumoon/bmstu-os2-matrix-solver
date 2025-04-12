@@ -1,6 +1,7 @@
 use crate::bicgstab_preconditioned;
 use color_eyre::owo_colors::OwoColorize;
 use itertools::Itertools;
+use nalgebra::DVector;
 use nalgebra_sparse::CsrMatrix;
 use plotly::common::Mode;
 use plotly::layout::{GridPattern, LayoutGrid};
@@ -97,16 +98,19 @@ pub fn amdahl_alpha(num_threads: usize, speedup: f64) -> f64 {
 
 pub fn run_benchmark(
     matrix: &CsrMatrix<f64>,
-    b: &[f64],
+    b: &DVector<f64>,
     tolerance: f64,
     max_iterations: usize,
-    max_threads: usize,
+    min_threads: u8,
+    max_threads: u8,
 ) -> Result<BenchmarkResults, color_eyre::eyre::Report> {
     let mut results = Vec::new();
     let mut time_serial = 0.0;
 
-    for num_threads in 1..=max_threads {
-        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build()?;
+    for num_threads in min_threads..=max_threads {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(usize::from(num_threads))
+            .build()?;
 
         let start = Instant::now();
         let solution =
@@ -122,11 +126,11 @@ pub fn run_benchmark(
         }
 
         let speedup = time_serial / elapsed_seconds;
-        let efficiency = speedup / num_threads as f64;
-        let serial_op_share = amdahl_alpha(num_threads, speedup);
+        let efficiency = speedup / f64::from(num_threads);
+        let serial_op_share = amdahl_alpha(num_threads.into(), speedup);
 
         let result = BenchmarkResult {
-            num_threads,
+            num_threads: num_threads.into(),
             time_serial,
             time_parallel: elapsed_seconds,
             speedup,
